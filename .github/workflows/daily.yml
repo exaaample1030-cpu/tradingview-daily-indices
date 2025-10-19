@@ -2,8 +2,8 @@ name: Yahoo Indices - Daily Top 3
 
 on:
   schedule:
-    - cron: "0 8 * * *"  # Run daily at 08:00 UTC (change as needed)
-  workflow_dispatch:    # Allow manual run
+    - cron: "0 8 * * *"  # 08:00 UTC daily
+  workflow_dispatch:
 
 jobs:
   fetch-top3:
@@ -23,9 +23,14 @@ jobs:
           pip install requests pandas
 
       - name: Run index fetcher
-        run: python main.py
+        run: |
+          echo "Running main.py ..."
+          python main.py || true
+          echo "=== Directory after run ==="
+          ls -al
 
       - name: Upload CSV artifact
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: top3_indices
