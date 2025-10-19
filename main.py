@@ -1,10 +1,4 @@
-from selenium import webdriver
-from selenium.webdriver.chrome.service import Service
-from selenium.webdriver.common.by import By
-from selenium.webdriver.chrome.options import Options
-from selenium.webdriver.support.ui import WebDriverWait
-from selenium.webdriver.support import expected_conditions as EC
-from webdriver_manager.chrome import ChromeDriverManager
+from playwright.sync_api import sync_playwright
 import pandas as pd
 from datetime import datetime
 import uuid
@@ -12,34 +6,21 @@ import uuid
 RUN_ID = f"run_{uuid.uuid4().hex[:8]}"
 TIMESTAMP = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
 
-options = Options()
-options.add_argument("--headless")
-options.add_argument("--disable-gpu")
-options.add_argument("--no-sandbox")
-options.add_argument("--window-size=1920,1080")
+url = "https://www.tradingview.com/markets/indices/quotes-all/"
 
-driver = webdriver.Chrome(service=Service(ChromeDriverManager().install()), options=options)
-driver.get("https://www.tradingview.com/markets/indices/quotes-all/")
+with sync_playwright() as p:
+    browser = p.chromium.launch(headless=True)
+    page = browser.new_page()
+    page.goto(url)
+    page.wait_for_selector("table.tv-data-table__table tbody tr", timeout=30000)
 
-# Wait for table to load
-try:
-    rows = WebDriverWait(driver, 20).until(
-        EC.presence_of_all_elements_located((By.CSS_SELECTOR, "table.tv-data-table__table tbody tr"))
-    )
-except:
-    driver.quit()
-    raise Exception("TradingView table did not load in time!")
+    rows = page.query_selector_all("table.tv-data-table__table tbody tr")
+    data = []
 
-data = []
-
-for row in rows:
-    cols = row.find_elements(By.TAG_NAME, "td")
-    if len(cols) < 5:
-        continue
-    try:
-        symbol = cols[0].text.strip()
-        fullname_span = cols[0].find_elements(By.TAG_NAME, "span")
-        fullname = fullname_span[0].text.strip() if fullname_span else symbol
+    for row in rows:
+        cols = row.query_selector_all("td")
+        if len(cols) < 7:
+            continue
 
         def clean_number(text):
             text = text.replace("−", "-").replace("%", "").replace(",", "").replace("+", "").strip()
@@ -48,11 +29,13 @@ for row in rows:
             except:
                 return 0.0
 
-        price = clean_number(cols[1].text)
-        change_amount = clean_number(cols[3].text)
-        change_pct = clean_number(cols[4].text)
-        day_high = cols[5].text.strip() if len(cols) > 5 else ""
-        day_low = cols[6].text.strip() if len(cols) > 6 else ""
+        symbol = cols[0].inner_text().strip()
+        fullname = cols[0].inner_text().strip()
+        price = clean_number(cols[1].inner_text())
+        change_amount = clean_number(cols[3].inner_text())
+        change_pct = clean_number(cols[4].inner_text())
+        day_high = cols[5].inner_text().strip()
+        day_low = cols[6].inner_text().strip()
 
         data.append({
             "Symbol": symbol,
@@ -63,21 +46,14 @@ for row in rows:
             "DayHigh": day_high,
             "DayLow": day_low
         })
-    except Exception as e:
-        print("Row parse error:", e)
-        continue
 
-driver.quit()
+    browser.close()
 
 df = pd.DataFrame(data)
-print("Columns detected:", df.columns.tolist())
-if "ChangePct" not in df.columns:
-    raise Exception("Column 'ChangePct' not found — scraping failed!")
-
 top3 = df.sort_values("ChangePct", ascending=False).head(3).copy()
 top3.insert(0, "RunID", RUN_ID)
 top3.insert(1, "DateTimeUTC", TIMESTAMP)
-top3.insert(2, "Rank", range(1, len(top3)+1))
+top3.insert(2, "Rank", range(1, len(top3) + 1))
 
 print(top3)
 top3.to_csv("top3_indices.csv", index=False)
