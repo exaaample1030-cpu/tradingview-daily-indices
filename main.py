@@ -2,11 +2,12 @@ from selenium import webdriver
 from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.common.by import By
 from selenium.webdriver.chrome.options import Options
+from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.support import expected_conditions as EC
 from webdriver_manager.chrome import ChromeDriverManager
 import pandas as pd
 from datetime import datetime
 import uuid
-import time
 
 RUN_ID = f"run_{uuid.uuid4().hex[:8]}"
 TIMESTAMP = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
@@ -15,12 +16,20 @@ options = Options()
 options.add_argument("--headless")
 options.add_argument("--disable-gpu")
 options.add_argument("--no-sandbox")
+options.add_argument("--window-size=1920,1080")
 
 driver = webdriver.Chrome(service=Service(ChromeDriverManager().install()), options=options)
 driver.get("https://www.tradingview.com/markets/indices/quotes-all/")
-time.sleep(10)
 
-rows = driver.find_elements(By.CSS_SELECTOR, "table.tv-data-table__table tbody tr")
+# Wait for table to load
+try:
+    rows = WebDriverWait(driver, 20).until(
+        EC.presence_of_all_elements_located((By.CSS_SELECTOR, "table.tv-data-table__table tbody tr"))
+    )
+except:
+    driver.quit()
+    raise Exception("TradingView table did not load in time!")
+
 data = []
 
 for row in rows:
@@ -29,7 +38,6 @@ for row in rows:
         continue
     try:
         symbol = cols[0].text.strip()
-        # Attempt to get full name if present
         fullname_span = cols[0].find_elements(By.TAG_NAME, "span")
         fullname = fullname_span[0].text.strip() if fullname_span else symbol
 
@@ -43,8 +51,8 @@ for row in rows:
         price = clean_number(cols[1].text)
         change_amount = clean_number(cols[3].text)
         change_pct = clean_number(cols[4].text)
-        day_high = cols[5].text.strip()
-        day_low = cols[6].text.strip()
+        day_high = cols[5].text.strip() if len(cols) > 5 else ""
+        day_low = cols[6].text.strip() if len(cols) > 6 else ""
 
         data.append({
             "Symbol": symbol,
@@ -62,8 +70,6 @@ for row in rows:
 driver.quit()
 
 df = pd.DataFrame(data)
-
-# Debug: verify columns exist
 print("Columns detected:", df.columns.tolist())
 if "ChangePct" not in df.columns:
     raise Exception("Column 'ChangePct' not found — scraping failed!")
