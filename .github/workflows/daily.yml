@@ -1,16 +1,15 @@
-name: TradingView Daily Top 3 Indices
+name: Yahoo Indices - Daily Top 3
 
 on:
   schedule:
-    - cron: "0 8 * * *"  # Runs every day at 08:00 UTC
-  workflow_dispatch:       # Allows you to trigger manually too
+    - cron: "0 8 * * *"  # Run daily at 08:00 UTC (change as needed)
+  workflow_dispatch:    # Allow manual run
 
 jobs:
-  scrape-tradingview:
+  fetch-top3:
     runs-on: ubuntu-latest
-
     steps:
-      - name: Checkout repository
+      - name: Checkout
         uses: actions/checkout@v4
 
       - name: Setup Python
@@ -20,14 +19,13 @@ jobs:
 
       - name: Install dependencies
         run: |
-          pip install pandas playwright
-          playwright install chromium
+          python -m pip install --upgrade pip
+          pip install requests pandas
 
-      - name: Run TradingView scraper
-        run: |
-          python main.py
+      - name: Run index fetcher
+        run: python main.py
 
-      - name: Upload CSV as artifact
+      - name: Upload CSV artifact
         uses: actions/upload-artifact@v4
         with:
           name: top3_indices
