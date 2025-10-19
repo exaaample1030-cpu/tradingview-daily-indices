@@ -1,72 +1,61 @@
-import requests
+from selenium import webdriver
+from selenium.webdriver.chrome.service import Service
+from selenium.webdriver.common.by import By
+from selenium.webdriver.chrome.options import Options
+from webdriver_manager.chrome import ChromeDriverManager
 import pandas as pd
 from datetime import datetime
 import uuid
+import time
 
-# --- Metadata ---
 RUN_ID = f"run_{uuid.uuid4().hex[:8]}"
 TIMESTAMP = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
 
-# TradingView internal JSON endpoint (public)
-url = "https://scanner.tradingview.com/indices/scan"
+options = Options()
+options.add_argument("--headless")
+options.add_argument("--disable-gpu")
+options.add_argument("--no-sandbox")
 
-# Payload: request key index fields
-payload = {
-    "symbols": {"query": {"types": []}, "tickers": []},
-    "columns": [
-        "name",
-        "close",
-        "change",
-        "change_abs",
-        "high",
-        "low",
-        "description"
-    ]
-}
+driver = webdriver.Chrome(service=Service(ChromeDriverManager().install()), options=options)
+driver.get("https://www.tradingview.com/markets/indices/quotes-all/")
 
-headers = {
-    "User-Agent": "Mozilla/5.0",
-    "Content-Type": "application/json"
-}
+time.sleep(10)  # wait for JS table
 
-# Make request
-response = requests.post(url, headers=headers, json=payload)
-if response.status_code != 200:
-    raise Exception(f"TradingView API request failed: {response.status_code}")
+rows = driver.find_elements(By.CSS_SELECTOR, "table.tv-data-table__table tbody tr")
 
-data = response.json().get("data", [])
-if not data:
-    raise Exception("No data returned from TradingView JSON endpoint.")
-
-records = []
-for item in data:
-    d = item.get("d", [])
-    if len(d) < 6:
+data = []
+for row in rows:
+    cols = row.find_elements(By.TAG_NAME, "td")
+    if len(cols) < 5:
         continue
-    records.append({
-        "Symbol": item.get("s", ""),
-        "FullName": d[6] if len(d) > 6 else "",
-        "Price": d[1],
-        "ChangePct": d[2],
-        "ChangeAmount": d[3],
-        "DayHigh": d[4],
-        "DayLow": d[5]
-    })
+    try:
+        symbol = cols[0].text.strip()
+        fullname = cols[0].find_element(By.TAG_NAME, "span").text if cols[0].find_elements(By.TAG_NAME, "span") else symbol
+        price = float(cols[1].text.replace(",", ""))
+        change_amount = float(cols[3].text.replace(",", "").replace("−", "-").replace("+",""))
+        change_pct = float(cols[4].text.replace("%","").replace("−", "-").replace("+",""))
+        day_high = cols[5].text.strip()
+        day_low = cols[6].text.strip()
 
-df = pd.DataFrame(records)
-if df.empty:
-    raise Exception("Parsed DataFrame is empty.")
+        data.append({
+            "Symbol": symbol,
+            "FullName": fullname,
+            "Price": price,
+            "ChangePct": change_pct,
+            "ChangeAmount": change_amount,
+            "DayHigh": day_high,
+            "DayLow": day_low
+        })
+    except:
+        continue
 
-# Sort and take top 3 by ChangePct
+driver.quit()
+
+df = pd.DataFrame(data)
 top3 = df.sort_values("ChangePct", ascending=False).head(3).copy()
-
-# Add metadata
 top3.insert(0, "RunID", RUN_ID)
 top3.insert(1, "DateTimeUTC", TIMESTAMP)
-top3.insert(2, "Rank", range(1, len(top3) + 1))
+top3.insert(2, "Rank", range(1, len(top3)+1))
 
-print(f"\n✅ Top 3 Indices (TradingView JSON API) — {TIMESTAMP}\n")
-print(top3.to_string(index=False))
-
-# Save output (so you can view it in workflow logs)
+print(top3)
 top3.to_csv("top3_indices.csv", index=False)
